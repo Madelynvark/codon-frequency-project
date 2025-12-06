@@ -1,0 +1,305 @@
+---
+title: "MCB290: Codon Frequency Analysis"
+subtitle: "(Due Dec. 10)"
+author: "Madelyn Varkey"
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load any libraries needed
+library(knitr)
+# load cds
+cds <- readRDS(url("https://github.com/kvbortle/MCB290_VanBortleLab_Undergraduate_Projects/raw/refs/heads/main/data/Ensemblv115.CDS.RDS")) 
+```
+
+
+------------------------------------------------------------------------
+
+## Section 1. Retrieve Coding Sequence Information (Annotation)
+
+------------------------------------------------------------------------
+
+In this section, I start by setting up the basic information I need to analyze coding sequences. Annotation means identifying which parts of the genome are protein-coding and describing their features. Here, I define the four nucleotide bases (A, C, G, T) and generate all 64 possible codons (every combination of three bases). This codon list will be my reference for counting and comparing codon usage later.
+
+
+```{r weeek1_codons_64}
+# Define the four nucleotide bases
+bases <- c("A","C","G","T")
+# Generate all 64 possible codons by looping through every combination
+codons <- c()
+for (a in bases)
+  for (b in bases)
+    for (c in bases)
+      codons <- c(codons, paste0(a,b,c))
+
+codons
+```
+
+------------------------------------------------------------------------
+
+## Section 2. Break up CDS into Individual Codons 
+
+------------------------------------------------------------------------
+
+In this section, I work with one coding sequence (CDS) at a time and break it into individual codons. A CDS (coding sequence) is the stretch of DNA that actually gets translated into a protein. I take a CDS from the annotation object cds, clean the sequence, break it into triplets (codons), check that its length is divisible by 3, and then count how many times each codon appears in that single CDS. 
+
+
+```{r break_cds_codons}
+#extract the CDS sequence in row 1, column 6
+seq<- cds [1, 6]
+# clean it - remove spaces, newlines, and make it uppercase)
+seq1<- gsub("\\s+","", toupper(seq))
+# split into codons 
+starts <- seq (1, nchar(seq1), 3) ## make sequence of start positions (1,4,7..)
+codons_seq1<-substring(seq1, starts, starts + 2) ## grab triplets
+## a) count total base sin the CDS and assign to L
+L <- nchar(seq1) ## 864 bases total
+## b) is the length divisible by 3
+is_divisible <- (L %% 3) == 0 ## the remainder = 0, so divisible 
+L %% 3
+```
+
+
+------------------------------------------------------------------------
+
+## Section 3. Determine Codon Frequency (%)
+
+------------------------------------------------------------------------
+
+In this section, I move from one example CDS to all of the coding sequences in the dataset. I first clean the CDS column and keep only sequences that are divisible by 3, start with ATG, end with a stop codon, and contain only A, C, G, and T. Then I split each valid CDS into codons, count how many times each of the 64 codons appears across all CDS, and calculate the frequency (percent) of each codon. Codon frequencies are variable because organisms often prefer some codons over others (codon bias), even when they code for the same amino acid.
+
+
+```{r clean_valid_cds}
+# clean cds column 6
+cds$CDS_clean <- toupper(gsub("\\s+","",as.character(cds[[6]])))
+## drop anything with non-ACTG characters
+has_only_acgt <- !grepl("[^ACGT]", cds$CDS_clean)
+# Vectorized checks 
+L <- nchar(cds$CDS_clean) ## length of each cds
+div3 <- (L %% 3) == 0 ## div by 3?
+startsATG <- substr(cds$CDS_clean, 1, 3) == "ATG" 
+ends3 <- substr(cds$CDS_clean, L-2, L) ## last 3 bases
+endsSTOP <- ends3 %in% c("TAA","TAG","TGA") ## stop codon
+##  Valid mask = all conditions true 
+valid <- has_only_acgt & div3 & startsATG & endsSTOP
+### e) keep only valid rows 
+cds_valid <- cds[valid, , drop = FALSE]
+```
+
+```{r split_valid_cds}
+# function to split any CDS string into codons
+split_into_codons <- function(s){
+  n <- nchar (s) ## count total bases in the seq
+  if (n <3) return(character(0)) ## return empty if shorter than 3 
+  substring (s, seq(1, n, 3), seq(3, n, 3)) ## extract tripelts
+}
+```
+```{r ref_64_codons}
+#create reference vector of 64 codons
+codon_ref <- setNames(integer(64), codons)
+# how many times each codon appears in a single CDS
+count_one <- function (s) {
+  t <- table(split_into_codons(s))
+  out <- codon_ref
+  k <- intersect (names (t), names (out))
+  out [k] <- as.integer (t[k])
+  out
+}
+## apply counting function to every CDS 
+cm <- do.call(rbind, lapply(as.character(cds_valid$CDS_clean), count_one))
+colnames(cm) <- paste0 ("codon_", codons)
+# create a summary data frame of total counts and frequencie across all CDSs
+codon_totals_df <- data.frame (
+  codon = codons, 
+  count = as.integer (colSums (cm)),
+  freq = as.integer (colSums(cm)) / sum(cm)
+)
+codon_totals_df$freq <- codon_totals_df$count / sum(codon_totals_df$count)
+
+knitr::kable(head(codon_totals_df, 10)) 
+```
+------------------------------------------------------------------------
+
+## Section 4. Plot Codon Frequency (%) Patterns
+
+------------------------------------------------------------------------
+
+In this section, I visualize the codon frequency data from Section 3. Plotting the codon frequencies helps reveal which codons are more common and which are rare. Codon frequencies vary because of biological factors like tRNA abundance and translation efficiency. An organism’s translation system (ribosomes + tRNAs) tends to use certian codons more often than others when building proteins.
+
+```{r bar_plot}
+# bar chart of codon counts
+barplot(
+  codon_totals_df$count,
+  names.arg = codon_totals_df$codon,
+  las = 2,
+  cex.names = 0.6,
+  col = "skyblue",
+  main = "Codon Usage Frequency",
+  ylab = "Count"
+)
+
+```
+```{r top_10}
+### top 10 codons
+top10 <- head(codon_totals_df, 10)
+barplot(
+  top10$count,
+  names.arg = top10$codon,
+  col = "steelblue",
+  main = "Top 10 Most Common Codons",
+  ylab = "Total Count"
+) 
+```
+```{r relative_freq}
+### relative frequencies
+total_codons <- sum(codon_totals_df$count)
+codon_totals_df$freq <- codon_totals_df$count / total_codons
+barplot(
+  head (codon_totals_df$freq, 10),
+  names.arg = head(codon_totals_df$codon, 10), 
+  col = "red",
+  main = "Top 10 Codons Relative Frequency",
+  ylab = "Fraction of Total Codons"
+)
+
+```
+
+
+------------------------------------------------------------------------
+
+## Section 5. Plot Amino Acid Fequency (%) Patterns
+
+------------------------------------------------------------------------
+
+This section is interesting because it reveals how codon bias connects to broader patterns in protein composition. By grouping codons by their corresponding amino acids, we can see which amino acids are used most and least frequently across all coding sequences. These patterns reflect how an organism’s genetic code has been shaped by evolution to optimize protein production and efficiency. For example, amino acids like leucine or serine may appear more often because they are encoded by multiple codons or contribute to stable, flexible protein structures. In contrast, rarer amino acids may play more specialized roles. Overall, analyzing amino acid frequency helps us understand molecular evolution and the biological strategies organisms use to build effective proteins.
+```{r amino_acid_frequency}
+#  Define the standard genetic code (codon → amino acid)
+codon_to_aa <- c(
+  "TTT"="F","TTC"="F","TTA"="L","TTG"="L",
+  "CTT"="L","CTC"="L","CTA"="L","CTG"="L",
+  "ATT"="I","ATC"="I","ATA"="I","ATG"="M",
+  "GTT"="V","GTC"="V","GTA"="V","GTG"="V",
+  "TCT"="S","TCC"="S","TCA"="S","TCG"="S",
+  "CCT"="P","CCC"="P","CCA"="P","CCG"="P",
+  "ACT"="T","ACC"="T","ACA"="T","ACG"="T",
+  "GCT"="A","GCC"="A","GCA"="A","GCG"="A",
+  "TAT"="Y","TAC"="Y","TAA"="STOP","TAG"="STOP",
+  "CAT"="H","CAC"="H","CAA"="Q","CAG"="Q",
+  "AAT"="N","AAC"="N","AAA"="K","AAG"="K",
+  "GAT"="D","GAC"="D","GAA"="E","GAG"="E",
+  "TGT"="C","TGC"="C","TGA"="STOP","TGG"="W",
+  "CGT"="R","CGC"="R","CGA"="R","CGG"="R",
+  "AGT"="S","AGC"="S","AGA"="R","AGG"="R",
+  "GGT"="G","GGC"="G","GGA"="G","GGG"="G"
+)
+
+# Add an amino acid column to your codon frequency data frame
+codon_totals_df$aa <- codon_to_aa[codon_totals_df$codon]
+# Sum codon frequencies by amino acid
+aa_freq_df <- aggregate(freq ~ aa, data = codon_totals_df, sum)
+# Remove the stop codons before plotting
+aa_freq_df <- aa_freq_df[aa_freq_df$aa != "STOP", ]
+# Sort by frequency (highest to lowest)
+aa_freq_df <- aa_freq_df[order(-aa_freq_df$freq), ]
+# Display a summary table of amino acid frequencies
+knitr::kable(head(aa_freq_df, 10), caption = "Top 10 Most Frequent Amino Acids")
+```
+
+
+------------------------------------------------------------------------
+
+## Section 6. Summary / Conclusions
+
+------------------------------------------------------------------------
+
+WHAT IS THE IMPLICATION OF YOUR RESULT? WHERE DO YOU GO FROM HERE?
+
+In this project, I analyzed codon usage across a set of protein-coding sequences.
+From the codon frequency results, I observed that certain codons, and therefore certain amino acids, are used far more often than others.
+For example, leucine (L) and serine (S) appeared most frequently, while tryptophan (W) and cysteine (C) were least common.
+This pattern shows something called codon bias, which means that cells tend to use some codons more often than others, even when they code for the same amino acid. This can happen because certain codons are easier or faster for the cell to read when making proteins.
+When I grouped codons by amino acid, the same trend held: amino acids encoded by several codons (like leucine or serine) had higher overall representation than those with only one codon (like methionine or tryptophan).
+These results support the idea that codon redundancy contributes to flexibility in the genetic code while maintaining protein sequence accuracy.
+Going forward, this type of analysis could be extended by:
+1. Comparing codon bias between different genes or species.
+2. Linking codon usage patterns to gene expression levels.
+3. Looking at how codon usage might affect the folding or stability of the resulting proteins.
+Overall, this analysis shows how simple computational tools in R can uncover real biological patterns in DNA sequences and highlight how genetic information is optimized for translation efficiency.
+
+------------------------------------------------------------------------
+
+### Section 7 Base Composition Across Codon Positions
+
+------------------------------------------------------------------------
+
+For this additional analysis, I wanted to see whether the three positions within codons use nucleotides differently. The first and second positions are usually more conserved because they determine the amino acid, while the third “wobble” position is generally more flexible. To test this, I combined all codons from the valid CDSs, separated each codon into its first, second, and third base, and calculated how often A, C, G, and T appear at each position. Comparing these frequencies helps show how evolutionary constraints shape codon structure.
+```{r base_comp}
+# Get all codons from all valid CDS
+all_codons <- unlist(
+  lapply(as.character(cds_valid$CDS_clean), split_into_codons)
+)
+
+# Extract the three positions
+pos1 <- substr(all_codons, 1, 1)
+pos2 <- substr(all_codons, 2, 2)
+pos3 <- substr(all_codons, 3, 3)
+
+# Count A, C, G, T at each position
+pos1_counts <- table(pos1)
+pos2_counts <- table(pos2)
+pos3_counts <- table(pos3)
+
+# Convert to frequencies
+pos1_freq <- pos1_counts / sum(pos1_counts)
+pos2_freq <- pos2_counts / sum(pos2_counts)
+pos3_freq <- pos3_counts / sum(pos3_counts)
+
+pos1_freq
+pos2_freq
+pos3_freq
+```
+
+```{r codon_positions_table}
+base_pos_df <- data.frame(
+  base = rep(bases, times = 3),
+  position = factor(rep(c("Position 1", "Position 2", "Position 3"), each = 4),
+                    levels = c("Position 1", "Position 2", "Position 3")),
+  freq = c(
+    as.numeric(pos1_freq[bases]),
+    as.numeric(pos2_freq[bases]),
+    as.numeric(pos3_freq[bases])
+  )
+)
+
+knitr::kable(base_pos_df, digits = 3,
+             caption = "Nucleotide frequencies at codon positions 1, 2, and 3")
+```
+
+```{r codon_positions_barplot}
+# Matrix of frequencies in A, C, G, T order
+freq_matrix <- rbind(
+  as.numeric(pos1_freq[bases]),
+  as.numeric(pos2_freq[bases]),
+  as.numeric(pos3_freq[bases])
+)
+
+rownames(freq_matrix) <- c("Position 1", "Position 2", "Position 3")
+
+barplot(
+  freq_matrix,
+  beside = TRUE,
+  names.arg = bases,
+  ylab = "Frequency",
+  xlab = "Base",
+  main = "Nucleotide frequencies at each codon position",
+  legend.text = TRUE
+)
+```
+
+The results show that the three positions are not used equally. Position 2 showed the strongest bias, which makes sense because I discovered the second base often determines the chemical class of the amino acid. Position 1 showed patterns too, likely because it influences which amino acid is encoded. In contrast, position 3 displayed the most variation and the least consistent pattern across bases, supporting the idea that it is under weaker selective pressure. Overall, these results show that codon structure is shaped not just by overall codon or amino acid frequency but also by positional nucleotide preferences. Examining codon positions highlights how translation, mutation, and evolutionary constraints influence the genetic code at a finer level than codon counts alone.
+
